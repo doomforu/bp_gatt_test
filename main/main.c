@@ -5,6 +5,7 @@
 #include "host/ble_hs.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+#include "gatt.h"
 
 
 #define TAG "BP_GATT_Server"
@@ -19,13 +20,7 @@ void ble_host_task(void *param)
     nimble_port_run();
     nimble_port_freertos_deinit();
 }
-/*
-static void on_stack_reset(int reason) {
-    ESP_LOGI(TAG, "nimble stack reset, reset reason: %d", reason);
-}
-*/
 static void on_stack_sync(void) {
-    /* On stack sync, do advertising initialization */
     start_advertising();
 }
 static void start_advertising(void) {
@@ -82,7 +77,20 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
 
         case BLE_GAP_EVENT_DISCONNECT:
             ESP_LOGI(TAG, "Disconnected; reason=%d", event->disconnect.reason);
+            reset_rssi_subscription(); // Resetovat stav notifikace RSSI
             start_advertising(); // Obnovit advertising po odpojeni
+            break;
+
+        case BLE_GAP_EVENT_SUBSCRIBE:
+            ESP_LOGI(TAG, "Subscribe event; conn_handle=%d, attr_handle=%d, reason=%d, prev_notify=%d, cur_notify=%d, prev_indicate=%d, cur_indicate=%d",
+                     event->subscribe.conn_handle,
+                     event->subscribe.attr_handle,
+                     event->subscribe.reason,
+                     event->subscribe.prev_notify,
+                     event->subscribe.cur_notify,
+                     event->subscribe.prev_indicate,
+                     event->subscribe.cur_indicate);
+            gatt_subscribe_cb(event); // Zpracovat subscribe udalost
             break;
 
         default:
@@ -92,8 +100,16 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
     return 0;
 }
 
+static void rssi_notify_task(void *arg) {
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Odeslat notifikaci kazdou sekundu
+        send_rssi_notification(); // Odeslat notifikaci pro pripojene spojeni
+    }
+}
+
 void app_main(void)
 {
+    int rc = 0;
     esp_err_t ret = nvs_flash_init();
     if(ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
@@ -107,9 +123,20 @@ void app_main(void)
         return;
     }
 
+    rc = gatt_svr_init();
+    if (rc != 0) {
+        ESP_LOGE("GATT", "Failed to initialize GATT server: %d", rc);
+        return;
+    }
+
     ble_hs_cfg.sync_cb = on_stack_sync;
 
     nimble_port_freertos_init(ble_host_task);
+    rc = xTaskCreate(rssi_notify_task, "rssi_notify", 2048, NULL, 10, NULL); // Spustit task pro odesilani RSSI notifikaci
+    if (rc != pdPASS) {
+        ESP_LOGE("GATT", "Failed to create RSSI notify task");
+        return;
+    }
 
     return;
 }
