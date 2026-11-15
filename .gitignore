@@ -79,3 +79,4 @@ Desktop.ini
 .vscode/
 .vscode/settings.json
 .vscode/c__cpp_properties.json
+.devcontainer/
