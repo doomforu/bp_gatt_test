@@ -67,6 +67,8 @@ static void start_advertising(void) {
     }
 }
 
+
+
 static int gap_event(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
